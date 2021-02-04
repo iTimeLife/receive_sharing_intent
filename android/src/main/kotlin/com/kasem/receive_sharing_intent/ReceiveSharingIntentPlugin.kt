@@ -1,12 +1,17 @@
 package com.kasem.receive_sharing_intent
 
+import android.Manifest.permission.READ_EXTERNAL_STORAGE
+import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.media.ThumbnailUtils
 import android.net.Uri
 import android.provider.MediaStore
+import android.util.Log
+import androidx.core.app.ActivityCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -15,27 +20,29 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry.Registrar
+import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry.NewIntentListener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLConnection
+import kotlin.math.log
 
 private const val MESSAGES_CHANNEL = "receive_sharing_intent/messages"
 private const val EVENTS_CHANNEL_MEDIA = "receive_sharing_intent/events-media"
 private const val EVENTS_CHANNEL_TEXT = "receive_sharing_intent/events-text"
 
 class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandler,
-        EventChannel.StreamHandler, NewIntentListener {
+        EventChannel.StreamHandler, NewIntentListener, ActivityCompat.OnRequestPermissionsResultCallback {
 
     private var initialMedia: JSONArray? = null
     private var latestMedia: JSONArray? = null
 
     private var initialText: String? = null
     private var latestText: String? = null
+    private var permissionUri: Uri? = null
 
     private var eventSinkMedia: EventChannel.EventSink? = null
     private var eventSinkText: EventChannel.EventSink? = null
@@ -111,6 +118,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     }
 
     private fun handleIntent(intent: Intent, initial: Boolean) {
+        permissionUri=null
         when {
             (intent.type?.startsWith("text") != true)
                     && (intent.action == Intent.ACTION_SEND
@@ -123,7 +131,32 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
             }
             (intent.type == null || intent.type?.startsWith("text") == true)
                     && intent.action == Intent.ACTION_SEND -> { // Sharing text
-                val value = intent.getStringExtra(Intent.EXTRA_TEXT)
+                var value:String?=null
+                if(intent.type?.startsWith("text/csv")==true){
+                    // 这个会在下面进行解释
+                    val uri: Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                    // 进行权限请求
+                    Log.e("","getParcelableExtra")
+                    val permission = ActivityCompat.checkSelfPermission(
+                            applicationContext,
+                            READ_EXTERNAL_STORAGE
+                    )
+                    if (permission != PERMISSION_GRANTED) {
+                        permissionUri=uri
+                        val permissionStorage: Array<String> = arrayOf(READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE)
+                        ActivityCompat.requestPermissions(
+                                this.binding!!.activity,
+                                permissionStorage,
+                                1
+                        )
+                        return
+                    }
+                    // 获取Intent中携带的数据
+                    value = readCSV(uri)
+                    permissionUri=null;
+                }else{
+                   value  = intent.getStringExtra(Intent.EXTRA_TEXT)
+                }
                 if (initial) initialText = value
                 latestText = value
                 eventSinkText?.success(latestText)
@@ -136,6 +169,20 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
             }
         }
     }
+
+    private fun readCSV(uri: Uri?): String? {
+        val resolver = applicationContext.contentResolver
+        if (uri != null) {
+            resolver.openInputStream(uri).use {
+                val reader = it?.reader()
+                val fileContent = reader?.readText()
+                Log.e("", fileContent)
+              return fileContent;
+            }
+        }
+        return null
+    }
+
 
     private fun getMediaUris(intent: Intent?): JSONArray? {
         if (intent == null) return null
@@ -209,6 +256,8 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         return duration
     }
 
+
+
     enum class MediaType {
         IMAGE, VIDEO, FILE;
     }
@@ -235,5 +284,20 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     override fun onNewIntent(intent: Intent): Boolean {
         handleIntent(intent, false)
         return false
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        Log.e("","onRequestPermissionsResult")
+        val permission = ActivityCompat.checkSelfPermission(
+                applicationContext,
+                READ_EXTERNAL_STORAGE
+        )
+        if (permission == PERMISSION_GRANTED) {
+          if (permissionUri!=null){
+              Log.e("","onRequestPermissionsResult　readCSV")
+              eventSinkText?.success(readCSV(permissionUri))
+              permissionUri=null;
+          }
+        }
     }
 }
