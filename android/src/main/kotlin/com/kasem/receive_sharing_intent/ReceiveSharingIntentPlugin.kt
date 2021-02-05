@@ -15,28 +15,25 @@ import androidx.core.app.ActivityCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
-import io.flutter.plugin.common.BinaryMessenger
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.*
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
-import io.flutter.plugin.common.PluginRegistry.Registrar
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry.NewIntentListener
+import io.flutter.plugin.common.PluginRegistry.Registrar
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.URLConnection
-import kotlin.math.log
 
 private const val MESSAGES_CHANNEL = "receive_sharing_intent/messages"
 private const val EVENTS_CHANNEL_MEDIA = "receive_sharing_intent/events-media"
 private const val EVENTS_CHANNEL_TEXT = "receive_sharing_intent/events-text"
 
 class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandler,
-        EventChannel.StreamHandler, NewIntentListener, ActivityCompat.OnRequestPermissionsResultCallback {
+        EventChannel.StreamHandler, NewIntentListener {
 
+    private var permissionResultListener: PluginRegistry.RequestPermissionsResultListener?=null
     private var initialMedia: JSONArray? = null
     private var latestMedia: JSONArray? = null
 
@@ -64,6 +61,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         applicationContext = binding.applicationContext
         setupCallbackChannels(binding.binaryMessenger)
+
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -130,11 +128,15 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                 eventSinkMedia?.success(latestMedia?.toString())
             }
             (intent.type == null || intent.type?.startsWith("text") == true)
-                    && intent.action == Intent.ACTION_SEND -> { // Sharing text
-                var value:String?=null
-                if(intent.type?.startsWith("text/csv")==true){
+                    && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_VIEW) -> { // Sharing text
+                var uri: Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                if (uri==null){
+                    uri=intent.data;
+                }
+                // 进行权限请求
+                val value: String?
+                if(uri!=null){
                     // 这个会在下面进行解释
-                    val uri: Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
                     // 进行权限请求
                     Log.e("","getParcelableExtra")
                     val permission = ActivityCompat.checkSelfPermission(
@@ -142,6 +144,24 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                             READ_EXTERNAL_STORAGE
                     )
                     if (permission != PERMISSION_GRANTED) {
+                        if (permissionResultListener==null){
+                            permissionResultListener= PluginRegistry.RequestPermissionsResultListener { requestCode, permissions, grantResults ->
+                                Log.e("","onRequestPermissionsResult")
+                                val permission = ActivityCompat.checkSelfPermission(
+                                        applicationContext,
+                                        READ_EXTERNAL_STORAGE
+                                )
+                                if (permission == PERMISSION_GRANTED) {
+                                    if (permissionUri!=null){
+                                        Log.e("","onRequestPermissionsResult　readCSV")
+                                        eventSinkText?.success(readCSV(permissionUri))
+                                        permissionUri=null;
+                                    }
+                                }
+                                true
+                            }
+                        }
+                        this.binding?.addRequestPermissionsResultListener(permissionResultListener!!)
                         permissionUri=uri
                         val permissionStorage: Array<String> = arrayOf(READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE)
                         ActivityCompat.requestPermissions(
@@ -153,7 +173,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                     }
                     // 获取Intent中携带的数据
                     value = readCSV(uri)
-                    permissionUri=null;
+                    permissionUri=null
                 }else{
                    value  = intent.getStringExtra(Intent.EXTRA_TEXT)
                 }
@@ -177,7 +197,7 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
                 val reader = it?.reader()
                 val fileContent = reader?.readText()
                 Log.e("", fileContent)
-              return fileContent;
+              return fileContent
             }
         }
         return null
@@ -286,18 +306,4 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
         return false
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        Log.e("","onRequestPermissionsResult")
-        val permission = ActivityCompat.checkSelfPermission(
-                applicationContext,
-                READ_EXTERNAL_STORAGE
-        )
-        if (permission == PERMISSION_GRANTED) {
-          if (permissionUri!=null){
-              Log.e("","onRequestPermissionsResult　readCSV")
-              eventSinkText?.success(readCSV(permissionUri))
-              permissionUri=null;
-          }
-        }
-    }
 }
