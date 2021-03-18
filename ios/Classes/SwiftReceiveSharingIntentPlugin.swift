@@ -18,10 +18,12 @@ public class SwiftReceiveSharingIntentPlugin: NSObject, FlutterPlugin, FlutterSt
     private var eventSinkMedia: FlutterEventSink? = nil;
     private var eventSinkText: FlutterEventSink? = nil;
     
+    // Singleton is required for calling functions directly from AppDelegate
+    // - it is required if the developer is using also another library, which requires to call "application(_:open:options:)"
+    // -> see Example app
+    public static let instance = SwiftReceiveSharingIntentPlugin()
     
     public static func register(with registrar: FlutterPluginRegistrar) {
-        let instance = SwiftReceiveSharingIntentPlugin()
-        
         let channel = FlutterMethodChannel(name: kMessagesChannel, binaryMessenger: registrar.messenger())
         registrar.addMethodCallDelegate(instance, channel: channel)
         
@@ -52,9 +54,11 @@ public class SwiftReceiveSharingIntentPlugin: NSObject, FlutterPlugin, FlutterSt
         }
     }
 
+    // By Adding bundle id to prefix, we'll ensure that the correct application will be openned
+    // - found the issue while developing multiple applications using this library, after "application(_:open:options:)" is called, the first app using this librabry (first app by bundle id alphabetically) is opened
     public func hasMatchingSchemePrefix(url: URL?) -> Bool {
-        if let url = url {
-            return url.absoluteString.hasPrefix(self.customSchemePrefix)
+        if let url = url, let appDomain = Bundle.main.bundleIdentifier {
+            return url.absoluteString.hasPrefix("\(self.customSchemePrefix)-\(appDomain)")
         }
         return false
     }
@@ -90,13 +94,13 @@ public class SwiftReceiveSharingIntentPlugin: NSObject, FlutterPlugin, FlutterSt
     // This is the function called on resuming the app from a shared link.
     // It handles requests to open a resource by a specified URL. Returning true means that it was handled successfully, false means the attempt to open the resource failed.
     // If the URL includes the module's ShareMedia prefix, then we process the URL and return true if we know how to handle that kind of URL or false if we are not able to.
-    // If the URL does not include the module's prefix, then we return true.
+    // If the URL does not include the module's prefix, then we return false to indicate our module's attempt to open the resource failed and others should be allowed to.
     // Reference: https://developer.apple.com/documentation/uikit/uiapplicationdelegate/1623112-application
     public func application(_ application: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey : Any] = [:]) -> Bool {
         if (hasMatchingSchemePrefix(url: url)) {
             return handleUrl(url: url, setInitialData: false)
         }
-        return true
+        return false
     }
     
     // This function is called by other modules like Firebase DeepLinks.
