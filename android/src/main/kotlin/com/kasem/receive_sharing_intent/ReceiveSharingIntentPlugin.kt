@@ -196,7 +196,9 @@ class ReceiveSharingIntentPlugin : FlutterPlugin, ActivityAware, MethodCallHandl
             resolver.openInputStream(uri).use {
                 val reader = it?.reader()
                 val fileContent = reader?.readText()
-                Log.e("", fileContent)
+                if (fileContent != null) {
+                    Log.e("", fileContent)
+                }
               return fileContent
             }
         }
